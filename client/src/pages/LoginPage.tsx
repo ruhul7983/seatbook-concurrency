@@ -1,7 +1,12 @@
 import { useState, FormEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import GradientButton from '../components/GradientButton';
 
 export default function LoginPage() {
+  const [searchParams] = useSearchParams();
+  const next = searchParams.get('next');
+  // Only same-site paths, so ?next= can't send people to another website.
+  const redirectTo = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -26,7 +31,7 @@ export default function LoginPage() {
 
     localStorage.setItem('token', data.token);
     localStorage.setItem('user', JSON.stringify(data.user));
-    window.location.href = '/';
+    window.location.href = redirectTo;
   };
 
   return (

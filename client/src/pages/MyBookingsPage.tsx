@@ -1,9 +1,49 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { formatCountdown, useCountdown } from '../hooks/useCountdown';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
+interface Hold {
+  holdId: number;
+  label: string;
+  expiresAt: string;
+  event: { id: number; title: string; venue: string };
+}
+
+function HoldRow({ hold, clockOffset }: { hold: Hold; clockOffset: number }) {
+  const msLeft = useCountdown(hold.expiresAt, clockOffset);
+
+  return (
+    <div className="glass rounded-2xl p-6 flex items-center justify-between min-w-[760px] border-[#f97316]/40">
+      <div>
+        <div className="font-bold text-lg">{hold.event.title}</div>
+        <div className="text-white/50 text-sm">
+          📍 {hold.event.venue} · 💺 {hold.label}
+        </div>
+      </div>
+      <div className="flex items-center gap-6">
+        {msLeft > 0 ? (
+          <>
+            <span className="text-2xl font-extrabold tabular-nums text-[#fdba74]">⏳ {formatCountdown(msLeft)}</span>
+            <Link
+              to={`/events/${hold.event.id}`}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#a855f7] to-[#ec4899] text-sm font-semibold hover:scale-105 transition-all duration-300"
+            >
+              Confirm →
+            </Link>
+          </>
+        ) : (
+          <span className="text-white/40">⌛ Hold expired</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function MyBookingsPage() {
+  const [holds, setHolds] = useState<Hold[]>([]);
+  const [clockOffset, setClockOffset] = useState(0);
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [totalSpent, setTotalSpent] = useState(0);
@@ -30,8 +70,22 @@ export default function MyBookingsPage() {
       });
   };
 
+  const loadHolds = () => {
+    fetch(`${API_URL}/holds/mine`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data) return;
+        setClockOffset(new Date(data.serverTime).getTime() - Date.now());
+        setHolds(data.holds);
+      })
+      .catch((err) => console.error(err));
+  };
+
   useEffect(() => {
     loadBookings();
+    loadHolds();
   }, []);
 
   const cancelBooking = async (id: number) => {
@@ -82,6 +136,19 @@ export default function MyBookingsPage() {
           <div className="text-4xl font-bold gradient-text">${totalSpent.toFixed(2)}</div>
         </div>
       </div>
+
+      {holds.length > 0 && (
+        <div className="mb-10">
+          <h2 className="text-2xl font-bold mb-4">
+            Seats on <span className="gradient-text">hold</span> ⏳
+          </h2>
+          <div className="space-y-4">
+            {holds.map((hold) => (
+              <HoldRow key={hold.holdId} hold={hold} clockOffset={clockOffset} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {bookings.length === 0 && (
         <div className="text-center py-20 text-white/40">

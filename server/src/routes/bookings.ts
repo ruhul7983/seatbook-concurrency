@@ -1,53 +1,29 @@
 import { Router } from 'express';
 import prisma from '../db';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireAttendee, AuthRequest } from '../middleware/auth';
+import { confirmHolds, holdSeat } from '../services/holdService';
 import { formatPrice } from '../utils/helpers';
+import { asyncHandler, parseId } from '../utils/http';
 
 const router = Router();
 
-router.post('/', requireAuth, async (req: AuthRequest, res) => {
-  try {
-    const { seatId } = req.body;
-
-    const seat = await prisma.seat.findUnique({
-      where: { id: Number(seatId) },
-      include: { event: true },
-    });
-
-    if (!seat) {
-      return res.status(404).json({ error: 'Seat not found' });
-    }
-
-    if (seat.event.startsAt < new Date()) {
-      return res.status(400).json({ msg: 'This event has already started' });
-    }
-
-    const existing = await prisma.booking.findFirst({
-      where: { seatId: seat.id, status: 'CONFIRMED' },
-    });
-
-    if (existing) {
-      return res.status(409).json({ error: 'Seat already booked' });
-    }
-
-    const booking = await prisma.booking.create({
-      data: {
-        seatId: seat.id,
-        userId: req.user!.id,
-        status: 'CONFIRMED',
-      },
-    });
-
+// Book straight away: a hold and its confirm in one request, so it takes the same seat lock
+// as the hold flow and can never book a seat someone else is holding.
+router.post(
+  '/',
+  requireAuth,
+  requireAttendee,
+  asyncHandler(async (req: AuthRequest, res) => {
+    const hold = await holdSeat(req.user!.id, parseId(req.body?.seatId, 'seatId'));
+    const [booking] = await confirmHolds(req.user!.id, hold.eventId, [hold.holdId]);
     res.status(201).json(booking);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
+  })
+);
 
 router.get('/mine', requireAuth, async (req: AuthRequest, res) => {
   try {
     const bookings = await prisma.booking.findMany({
-      where: { userId: req.user!.id },
+      where: { userId: req.user!.id, status: { in: ['CONFIRMED', 'CANCELLED'] } },
       orderBy: { createdAt: 'desc' },
       include: { seat: { include: { event: true } } },
     });

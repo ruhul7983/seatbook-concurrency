@@ -1,44 +1,48 @@
 import { Router } from 'express';
 import prisma from '../db';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, optionalAuth, AuthRequest } from '../middleware/auth';
 import { getEventWithSeats, listEvents } from '../services/eventService';
+import { MAX_SEATS_PER_HOLD } from '../services/holdService';
 import { formatPrice, seatLabel } from '../utils/helpers';
+import { asyncHandler, HttpError, parseId } from '../utils/http';
 
 const router = Router();
 
-router.get('/', async (req, res) => {
-  const events = await listEvents();
-  res.json(events);
-});
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    res.json(await listEvents());
+  })
+);
 
-router.get('/:id', async (req, res) => {
-  const event = await getEventWithSeats(req);
+router.get(
+  '/:id',
+  optionalAuth,
+  asyncHandler(async (req: AuthRequest, res) => {
+    const result = await getEventWithSeats(parseId(req.params.id), req.user?.id);
+    if (!result) {
+      throw new HttpError(404, 'Event not found');
+    }
 
-  if (!event) {
-    return res.json({ success: false, message: 'Event not found' });
-  }
-
-  const seats = event.seats.map((seat) => ({
-    id: seat.id,
-    row: seat.row,
-    col: seat.col,
-    label: seat.label,
-    available: seat.bookings.length === 0,
-  }));
-
-  res.json({
-    id: event.id,
-    title: event.title,
-    description: event.description,
-    venue: event.venue,
-    startsAt: event.startsAt,
-    price: formatPrice(event.priceCents),
-    rows: event.rows,
-    cols: event.cols,
-    organizer: event.organizer,
-    seats,
-  });
-});
+    const { event, seats, myHolds, holdExpiresAt } = result;
+    res.json({
+      id: event.id,
+      title: event.title,
+      description: event.description,
+      venue: event.venue,
+      startsAt: event.startsAt,
+      price: formatPrice(event.priceCents),
+      rows: event.rows,
+      cols: event.cols,
+      organizer: event.organizer,
+      seats,
+      myHolds,
+      holdExpiresAt,
+      maxSeatsPerHold: MAX_SEATS_PER_HOLD,
+      serverTime: new Date(),
+    });
+  })
+);
 
 router.post('/', requireAuth, async (req: AuthRequest, res) => {
   if (req.user!.role !== 'ORGANIZER') {

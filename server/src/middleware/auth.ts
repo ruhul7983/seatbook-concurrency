@@ -28,3 +28,23 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
     return res.status(401).json({ message: 'Invalid token' });
   }
 }
+
+// For public routes that show more to a signed-in viewer. A missing or bad token just means anonymous.
+export function optionalAuth(req: AuthRequest, res: Response, next: NextFunction) {
+  const header = req.headers.authorization;
+  if (header) {
+    try {
+      req.user = jwt.verify(header.replace('Bearer ', ''), JWT_SECRET) as AuthUser;
+    } catch {
+      req.user = undefined;
+    }
+  }
+  next();
+}
+
+export function requireAttendee(req: AuthRequest, res: Response, next: NextFunction) {
+  if (req.user?.role !== 'ATTENDEE') {
+    return res.status(403).json({ error: 'Only attendees can hold or book seats' });
+  }
+  next();
+}

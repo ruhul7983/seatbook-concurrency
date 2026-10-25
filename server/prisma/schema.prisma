@@ -14,8 +14,11 @@ enum Role {
 }
 
 enum BookingStatus {
+  HELD
   CONFIRMED
   CANCELLED
+  EXPIRED
+  RELEASED
 }
 
 model User {
@@ -56,6 +59,11 @@ model Seat {
   @@unique([eventId, row, col])
 }
 
+// The live seat lock for a hold lives in Redis. This table is the record of every hold and booking.
+//
+// The migration 20261026000100_booking_holds also adds a partial unique index that Prisma cannot
+// express here: at most one CONFIRMED booking per seat ("Booking_seatId_confirmed_key").
+// Prisma 5.22 does not try to drop it; check generated migrations for that after upgrading Prisma.
 model Booking {
   id          Int           @id @default(autoincrement())
   seatId      Int
@@ -63,6 +71,11 @@ model Booking {
   userId      Int
   user        User          @relation(fields: [userId], references: [id])
   status      BookingStatus @default(CONFIRMED)
+  holdToken   String?       @unique
+  expiresAt   DateTime?
+  confirmedAt DateTime?
   createdAt   DateTime      @default(now())
   cancelledAt DateTime?
+
+  @@index([status, expiresAt])
 }

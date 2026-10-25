@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: seatbook
       POSTGRES_DB: seatbook
     ports:
-      - "5433:5432"
+      - "5434:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
@@ -15,15 +15,30 @@ services:
       timeout: 3s
       retries: 20
 
+  # Holds seat locks only. No ports: reachable from the server over the compose network, not from the host.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
   server:
     build: ./server
     environment:
       DATABASE_URL: postgresql://seatbook:seatbook@db:5432/seatbook
+      REDIS_URL: redis://redis:6379
       PORT: 4000
     ports:
       - "4000:4000"
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - ./server/src:/app/src
@@ -42,3 +57,4 @@ services:
 
 volumes:
   db-data:
+  redis-data:
