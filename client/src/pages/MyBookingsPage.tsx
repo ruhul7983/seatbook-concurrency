@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { formatCountdown, useCountdown } from '../hooks/useCountdown';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
@@ -48,7 +49,9 @@ export default function MyBookingsPage() {
   const [loading, setLoading] = useState(true);
   const [totalSpent, setTotalSpent] = useState(0);
   const [upcoming, setUpcoming] = useState(0);
-  const [toast, setToast] = useState('');
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<any>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   const loadBookings = () => {
     fetch(`${API_URL}/bookings/mine`, {
@@ -88,16 +91,32 @@ export default function MyBookingsPage() {
     loadHolds();
   }, []);
 
-  const cancelBooking = async (id: number) => {
-    if (!window.confirm('Are you sure you want to cancel? 😢')) return;
+  const showToast = (type: 'success' | 'error', message: string) => {
+    setToast({ type, message });
+    setTimeout(() => setToast(null), 3000);
+  };
 
-    await fetch(`${API_URL}/bookings/${id}/cancel`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-    });
-    setToast('Booking cancelled successfully! ✅');
-    setTimeout(() => setToast(''), 3000);
-    loadBookings();
+  const cancelBooking = async (id: number) => {
+    setCancelTarget(null);
+    setCancelling(true);
+    try {
+      const res = await fetch(`${API_URL}/bookings/${id}/cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        showToast('success', 'Booking cancelled successfully! ✅');
+      } else {
+        showToast('error', '😢 ' + (data?.error || data?.message || 'Could not cancel the booking'));
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('error', 'Something went wrong 😢');
+    } finally {
+      setCancelling(false);
+      loadBookings();
+    }
   };
 
   if (loading) {
@@ -112,9 +131,28 @@ export default function MyBookingsPage() {
   return (
     <div>
       {toast && (
-        <div className="fixed top-24 right-6 z-50 px-6 py-4 rounded-2xl shadow-2xl font-medium bg-gradient-to-r from-[#22c55e] to-[#16a34a]">
-          {toast}
+        <div
+          className={`fixed top-24 right-6 z-50 px-6 py-4 rounded-2xl shadow-2xl font-medium ${
+            toast.type === 'success'
+              ? 'bg-gradient-to-r from-[#22c55e] to-[#16a34a]'
+              : 'bg-gradient-to-r from-[#ef4444] to-[#dc2626]'
+          }`}
+        >
+          {toast.message}
         </div>
+      )}
+
+      {cancelTarget && (
+        <ConfirmDialog
+          title={`Cancel your booking for ${cancelTarget.seat}?`}
+          confirmLabel="Cancel booking"
+          cancelLabel="Keep it"
+          danger
+          onConfirm={() => cancelBooking(cancelTarget.id)}
+          onCancel={() => setCancelTarget(null)}
+        >
+          {cancelTarget.event.title}. The seat goes back on sale right away, and someone else can book it.
+        </ConfirmDialog>
       )}
 
       <h1 className="text-5xl font-extrabold mb-2">
@@ -177,13 +215,20 @@ export default function MyBookingsPage() {
             <div className="flex items-center gap-6">
               <span className="px-3 py-1 rounded-full bg-[#a855f7]/20 text-[#d8b4fe] text-sm">💺 {b.seat}</span>
               <span className="font-bold">{b.event.price}</span>
-              <span className="px-3 py-1 rounded-full bg-[#22c55e]/20 text-[#86efac] text-sm">✓ {b.status}</span>
-              <button
-                onClick={() => cancelBooking(b.id)}
-                className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#ef4444] to-[#dc2626] text-sm font-semibold hover:scale-105 transition-all duration-300"
-              >
-                Cancel
-              </button>
+              {b.status === 'CANCELLED' ? (
+                <span className="px-3 py-1 rounded-full bg-white/10 text-white/50 text-sm">✕ CANCELLED</span>
+              ) : (
+                <span className="px-3 py-1 rounded-full bg-[#22c55e]/20 text-[#86efac] text-sm">✓ {b.status}</span>
+              )}
+              {b.status === 'CONFIRMED' && new Date(b.event.startsAt) > new Date() && (
+                <button
+                  onClick={() => setCancelTarget(b)}
+                  disabled={cancelling}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#ef4444] to-[#dc2626] text-sm font-semibold hover:scale-105 transition-all duration-300 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              )}
             </div>
           </div>
         ))}

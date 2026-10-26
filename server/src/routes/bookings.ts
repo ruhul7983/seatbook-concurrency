@@ -3,7 +3,7 @@ import prisma from '../db';
 import { requireAuth, requireAttendee, AuthRequest } from '../middleware/auth';
 import { confirmHolds, holdSeat } from '../services/holdService';
 import { formatPrice } from '../utils/helpers';
-import { asyncHandler, parseId } from '../utils/http';
+import { asyncHandler, HttpError, parseId } from '../utils/http';
 
 const router = Router();
 
@@ -49,15 +49,39 @@ router.get('/mine', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-router.post('/:id/cancel', requireAuth, async (req: AuthRequest, res) => {
-  const id = parseInt(req.params.id);
+router.post(
+  '/:id/cancel',
+  requireAuth,
+  asyncHandler(async (req: AuthRequest, res) => {
+    const id = parseId(req.params.id);
+    const userId = req.user!.id;
 
-  await prisma.booking.updateMany({
-    where: { id, status: 'CONFIRMED' },
-    data: { status: 'CANCELLED', cancelledAt: new Date() },
-  });
+    // Someone else's booking gets the same 404 as a missing one, so ids can't be probed.
+    const booking = await prisma.booking.findFirst({
+      where: { id, userId },
+      include: { seat: { include: { event: true } } },
+    });
+    if (!booking || !['CONFIRMED', 'CANCELLED'].includes(booking.status)) {
+      throw new HttpError(404, 'Booking not found');
+    }
 
-  res.json({ success: true });
-});
+    // Cancelling twice (a double click, a retry) is not an error.
+    if (booking.status === 'CANCELLED') {
+      return res.json({ id, status: booking.status, cancelledAt: booking.cancelledAt });
+    }
+    if (booking.seat.event.startsAt <= new Date()) {
+      throw new HttpError(400, 'This event has already started, so the booking can no longer be cancelled');
+    }
+
+    // If a parallel request cancels it first this matches nothing, and the booking is cancelled either way.
+    await prisma.booking.updateMany({
+      where: { id, userId, status: 'CONFIRMED' },
+      data: { status: 'CANCELLED', cancelledAt: new Date() },
+    });
+    const cancelled = await prisma.booking.findUniqueOrThrow({ where: { id } });
+
+    res.json({ id, status: cancelled.status, cancelledAt: cancelled.cancelledAt });
+  })
+);
 
 export default router;

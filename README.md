@@ -65,7 +65,7 @@ You need a Postgres running at the `DATABASE_URL` in `server/.env`, and a Redis 
 | DELETE | `/holds/:id` | attendee | Release one held seat early |
 | POST | `/bookings` | attendee | Book a seat straight away (a hold and its confirm in one request) |
 | GET | `/bookings/mine` | attendee | Your bookings |
-| POST | `/bookings/:id/cancel` | attendee | Cancel a booking |
+| POST | `/bookings/:id/cancel` | attendee | Cancel one of your own bookings, until the event starts. Cancelling twice is fine; anyone else's booking is a 404 |
 
 Send the token as `Authorization: Bearer <token>`. `GET /events/:id` also accepts it, to mark the viewer's own hold.
 
