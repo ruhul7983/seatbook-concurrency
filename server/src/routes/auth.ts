@@ -13,13 +13,19 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'email, password and name are required' });
     }
 
+    // Sign-up only ever makes attendees. Organizer accounts are created in prisma/seed.ts, never
+    // through the API. Asking for any other role is refused rather than silently ignored.
+    if (role !== undefined && role !== 'ATTENDEE') {
+      return res.status(403).json({ error: 'Organizer accounts cannot be created through sign-up' });
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
       data: {
         email,
         name,
         passwordHash,
-        role: role === 'ORGANIZER' ? 'ORGANIZER' : 'ATTENDEE',
+        role: 'ATTENDEE',
       },
     });
 

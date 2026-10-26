@@ -30,6 +30,7 @@ async function main() {
 
   const passwordHash = await bcrypt.hash('password123', 10);
 
+  // The only place organizer accounts are created: sign-up (POST /auth/register) makes attendees only.
   const organizer = await prisma.user.create({
     data: { email: 'organizer@seatbook.test', name: 'Karim Rahman', passwordHash, role: 'ORGANIZER' },
   });

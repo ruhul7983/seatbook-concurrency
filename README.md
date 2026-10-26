@@ -54,7 +54,7 @@ You need a Postgres running at the `DATABASE_URL` in `server/.env`, and a Redis 
 
 | Method | Path | Auth | What it does |
 |---|---|---|---|
-| POST | `/auth/register` | none | Create an account, returns a token |
+| POST | `/auth/register` | none | Create an attendee account, returns a token. Any other `role` is refused with 403; organizer accounts come only from `prisma/seed.ts` |
 | POST | `/auth/login` | none | Log in, returns a token |
 | GET | `/events` | none | List events with seats left |
 | GET | `/events/:id` | none | One event with its seat map |
