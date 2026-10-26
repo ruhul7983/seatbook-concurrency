@@ -2,6 +2,9 @@ import { useState, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+// Same limits as the server (server/src/utils/eventInput.ts).
+const MAX_ROWS = 26;
+const MAX_COLS = 30;
 
 export default function CreateEventPage() {
   const navigate = useNavigate();
@@ -17,6 +20,16 @@ export default function CreateEventPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
+
+    // Up to two decimals, so "15.5" or "15.50" is fine and "15.555" or "-5" is not. The server checks again.
+    if (!/^\d+(\.\d{1,2})?$/.test(price.trim())) {
+      setError('Enter the ticket price in dollars, like 15 or 15.50');
+      return;
+    }
+    if (!startsAt) {
+      setError('Pick a start date and time');
+      return;
+    }
 
     try {
       const res = await fetch(`${API_URL}/events`, {
@@ -37,7 +50,8 @@ export default function CreateEventPage() {
       });
 
       if (!res.ok) {
-        setError(await res.text());
+        const data = await res.json().catch(() => null);
+        setError(data?.error || data?.message || 'Something went wrong 😢');
         return;
       }
 
@@ -50,9 +64,10 @@ export default function CreateEventPage() {
   };
 
   const previewRows = [];
-  for (let r = 0; r < Number(rows); r++) {
+  // Capped at the server's limits, so typing a huge number can't freeze the page with thousands of seats.
+  for (let r = 0; r < Math.min(Number(rows), MAX_ROWS); r++) {
     const seats = [];
-    for (let c = 0; c < Number(cols); c++) {
+    for (let c = 0; c < Math.min(Number(cols), MAX_COLS); c++) {
       seats.push(String.fromCharCode(65 + r) + (c + 1));
     }
     previewRows.push(seats);
@@ -94,12 +109,18 @@ export default function CreateEventPage() {
           <div className="grid grid-cols-3 gap-4">
             <input
               type="number"
+              min={1}
+              max={MAX_ROWS}
+              title="Rows"
               value={rows}
               onChange={(e) => setRows(Number(e.target.value))}
               className="w-full px-5 py-4 rounded-2xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-[#a855f7] transition-all duration-300"
             />
             <input
               type="number"
+              min={1}
+              max={MAX_COLS}
+              title="Seats per row"
               value={cols}
               onChange={(e) => setCols(Number(e.target.value))}
               className="w-full px-5 py-4 rounded-2xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-[#a855f7] transition-all duration-300"

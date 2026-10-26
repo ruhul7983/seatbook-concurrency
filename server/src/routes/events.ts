@@ -3,6 +3,7 @@ import prisma from '../db';
 import { requireAuth, optionalAuth, AuthRequest } from '../middleware/auth';
 import { getEventWithSeats, listEvents } from '../services/eventService';
 import { MAX_SEATS_PER_HOLD } from '../services/holdService';
+import { parseEventInput } from '../utils/eventInput';
 import { formatPrice, seatLabel } from '../utils/helpers';
 import { asyncHandler, HttpError, parseId } from '../utils/http';
 
@@ -44,48 +45,29 @@ router.get(
   })
 );
 
-router.post('/', requireAuth, async (req: AuthRequest, res) => {
-  if (req.user!.role !== 'ORGANIZER') {
-    return res.status(403).json({ error: 'Only organizers can create events' });
-  }
-
-  try {
-    const { title, description, venue, startsAt, rows, cols, priceCents } = req.body;
-
-    if (!title || !venue || !startsAt || !rows || !cols) {
-      return res.status(400).json({ error: 'Missing required fields' });
+router.post(
+  '/',
+  requireAuth,
+  asyncHandler(async (req: AuthRequest, res) => {
+    if (req.user!.role !== 'ORGANIZER') {
+      throw new HttpError(403, 'Only organizers can create events');
     }
 
-    if (rows > 26 || cols > 30) {
-      return res.status(400).json({ msg: 'Seat grid too large (max 26 rows x 30 cols)' });
-    }
+    const input = parseEventInput(req.body);
 
     const seats = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < input.rows; r++) {
+      for (let c = 0; c < input.cols; c++) {
         seats.push({ row: r, col: c, label: seatLabel(r, c) });
       }
     }
 
     const event = await prisma.event.create({
-      data: {
-        title,
-        description: description || '',
-        venue,
-        startsAt: new Date(startsAt),
-        rows,
-        cols,
-        priceCents: priceCents || 0,
-        organizerId: req.user!.id,
-        seats: { create: seats },
-      },
+      data: { ...input, organizerId: req.user!.id, seats: { create: seats } },
     });
 
     res.status(201).json(event);
-  } catch (err) {
-    console.log(err);
-    res.status(500).send('Something went wrong');
-  }
-});
+  })
+);
 
 export default router;
