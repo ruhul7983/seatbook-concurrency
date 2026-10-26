@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import prisma from '../db';
+import { signToken } from '../middleware/auth';
 
 const router = Router();
 
@@ -29,9 +29,7 @@ router.post('/register', async (req, res) => {
       },
     });
 
-    const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, 'seatbook-secret-123', {
-      expiresIn: '7d',
-    });
+    const token = signToken(user);
 
     res.status(201).json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
   } catch (err: any) {
@@ -52,9 +50,7 @@ router.post('/login', async (req, res) => {
     return res.status(401).json({ message: 'Invalid credentials' });
   }
 
-  const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, 'seatbook-secret-123', {
-    expiresIn: '7d',
-  });
+  const token = signToken(user);
 
   res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
 });

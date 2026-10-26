@@ -33,6 +33,11 @@ services:
       DATABASE_URL: postgresql://seatbook:seatbook@db:5432/seatbook
       REDIS_URL: redis://redis:6379
       PORT: 4000
+      # Set JWT_SECRET in your shell or a root .env file to choose the secret. Left unset, the server
+      # generates a random one into JWT_SECRET_FILE on first start and keeps it in the server-secrets
+      # volume, so logins survive restarts and no secret is committed to git.
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET_FILE: /app/secrets/jwt-secret
     ports:
       - "4000:4000"
     depends_on:
@@ -43,6 +48,7 @@ services:
     volumes:
       - ./server/src:/app/src
       - ./server/prisma:/app/prisma
+      - server-secrets:/app/secrets
 
   client:
     build: ./client
@@ -58,3 +64,4 @@ services:
 volumes:
   db-data:
   redis-data:
+  server-secrets:

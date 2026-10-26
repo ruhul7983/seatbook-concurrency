@@ -18,6 +18,7 @@ docker compose up --build
 - Postgres: `localhost:5433` (user / password / db: `seatbook`)
 
 - Redis: not exposed to the host. Only the server reaches it, at `redis://redis:6379` on the compose network. To look inside: `docker compose exec redis redis-cli`.
+- JWT secret: none is committed. On first start the server generates a random one into the `server-secrets` volume and reuses it after restarts. To choose your own, set `JWT_SECRET` (32+ characters) in your shell or a root `.env` file. `docker compose down -v` deletes it, which logs everyone out.
 
 The database is migrated and seeded on first start. To start from a clean database: `docker compose down -v`.
 
@@ -36,11 +37,13 @@ All passwords are `password123`.
 ### Without Docker
 
 ```bash
-cd server && cp .env.example .env && npm install && npm run db:migrate && npm run db:seed && npm run dev
+cd server
+export DATABASE_URL=postgresql://seatbook:seatbook@localhost:5433/seatbook REDIS_URL=redis://localhost:6379 JWT_SECRET=$(openssl rand -hex 32)
+npm install && npm run db:migrate && npm run db:seed && npm run dev
 cd client && npm install && npm run dev
 ```
 
-You need a Postgres running at the `DATABASE_URL` in `server/.env`, and a Redis at `REDIS_URL` (default `redis://localhost:6379`).
+You need a Postgres at `DATABASE_URL` and a Redis at `REDIS_URL`. The server refuses to start without `JWT_SECRET` (or `JWT_SECRET_FILE`, a file it generates the secret into once); there is no built-in default.
 
 ## Scripts
 

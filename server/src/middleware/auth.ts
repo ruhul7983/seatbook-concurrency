@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'seatbook-secret-123';
+import { JWT_SECRET } from '../config';
 
 export interface AuthUser {
   id: number;
@@ -13,32 +12,46 @@ export interface AuthRequest extends Request {
   user?: AuthUser;
 }
 
+// Tokens are signed and checked only here, with the one secret from config.ts. The algorithm is
+// pinned on both sides so a token can't pick a different one (such as "none").
+const ALGORITHM = 'HS256';
+const TOKEN_LIFETIME = '7d';
+
+export function signToken(user: AuthUser) {
+  return jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, {
+    algorithm: ALGORITHM,
+    expiresIn: TOKEN_LIFETIME,
+  });
+}
+
+function readToken(header: string | undefined): AuthUser | null {
+  if (!header?.startsWith('Bearer ')) {
+    return null;
+  }
+  try {
+    const payload = jwt.verify(header.slice('Bearer '.length), JWT_SECRET, { algorithms: [ALGORITHM] }) as AuthUser;
+    return { id: payload.id, email: payload.email, role: payload.role };
+  } catch {
+    return null;
+  }
+}
+
 export function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
-  const header = req.headers.authorization;
-  if (!header) {
+  if (!req.headers.authorization) {
     return res.status(401).json({ error: 'Not logged in' });
   }
 
-  const token = header.replace('Bearer ', '');
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as AuthUser;
-    req.user = payload;
-    next();
-  } catch (err) {
-    return res.status(401).json({ message: 'Invalid token' });
+  const user = readToken(req.headers.authorization);
+  if (!user) {
+    return res.status(401).json({ error: 'Your session has expired. Please log in again.' });
   }
+  req.user = user;
+  next();
 }
 
 // For public routes that show more to a signed-in viewer. A missing or bad token just means anonymous.
 export function optionalAuth(req: AuthRequest, res: Response, next: NextFunction) {
-  const header = req.headers.authorization;
-  if (header) {
-    try {
-      req.user = jwt.verify(header.replace('Bearer ', ''), JWT_SECRET) as AuthUser;
-    } catch {
-      req.user = undefined;
-    }
-  }
+  req.user = readToken(req.headers.authorization) ?? undefined;
   next();
 }
 
