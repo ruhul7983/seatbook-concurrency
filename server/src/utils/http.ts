@@ -17,9 +17,13 @@ export function asyncHandler<R extends Request>(fn: (req: R, res: Response) => P
   };
 }
 
+// Ids are Postgres INTEGER columns. Anything above their maximum can't exist, and passing it to
+// Prisma fails with a 500, so it is rejected here as a bad request.
+const MAX_ID = 2_147_483_647;
+
 export function parseId(value: unknown, name = 'id'): number {
   const id = Number(value);
-  if (!Number.isInteger(id) || id <= 0) {
+  if (!Number.isInteger(id) || id <= 0 || id > MAX_ID) {
     throw new HttpError(400, `Invalid ${name}`);
   }
   return id;

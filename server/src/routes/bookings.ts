@@ -20,8 +20,11 @@ router.post(
   })
 );
 
-router.get('/mine', requireAuth, async (req: AuthRequest, res) => {
-  try {
+// Errors reach the error middleware as a 500, rather than an empty list that looks like "no bookings".
+router.get(
+  '/mine',
+  requireAuth,
+  asyncHandler(async (req: AuthRequest, res) => {
     const bookings = await prisma.booking.findMany({
       where: { userId: req.user!.id, status: { in: ['CONFIRMED', 'CANCELLED'] } },
       orderBy: { createdAt: 'desc' },
@@ -43,11 +46,8 @@ router.get('/mine', requireAuth, async (req: AuthRequest, res) => {
         },
       }))
     );
-  } catch (err) {
-    console.log(err);
-    res.json([]);
-  }
-});
+  })
+);
 
 router.post(
   '/:id/cancel',
