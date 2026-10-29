@@ -13,7 +13,10 @@ export default function EventsPage() {
 
   useEffect(() => {
     fetch(`${API_URL}/events`)
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error(`GET /events failed: ${res.status}`);
+        return res.json();
+      })
       .then((data) => {
         setEvents(data);
         setFiltered(data);

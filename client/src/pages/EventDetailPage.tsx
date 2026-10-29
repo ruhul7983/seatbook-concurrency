@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
+import { apiFetch } from '../api';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { formatCountdown, useCountdown } from '../hooks/useCountdown';
 
@@ -108,7 +109,7 @@ export default function EventDetailPage() {
   };
 
   const send = async (method: string, path: string, body?: object) => {
-    const res = await fetch(`${API_URL}${path}`, {
+    const res = await apiFetch(`${API_URL}${path}`, {
       method,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: body ? JSON.stringify(body) : undefined,

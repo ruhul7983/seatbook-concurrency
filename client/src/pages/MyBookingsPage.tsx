@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { apiFetch } from '../api';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { formatCountdown, useCountdown } from '../hooks/useCountdown';
 
@@ -52,38 +53,52 @@ export default function MyBookingsPage() {
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [cancelTarget, setCancelTarget] = useState<any>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [error, setError] = useState('');
 
   const loadBookings = () => {
-    fetch(`${API_URL}/bookings/mine`, {
+    apiFetch(`${API_URL}/bookings/mine`, {
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
     })
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error(`GET /bookings/mine failed: ${res.status}`);
+        return res.json();
+      })
       .then((data) => {
         setBookings(data);
 
         let spent = 0;
         let up = 0;
         data.forEach((b: any) => {
-          spent += parseFloat(b.event.price.replace('$', ''));
+          if (b.status === 'CONFIRMED') spent += parseFloat(b.event.price.replace('$', ''));
           if (new Date(b.event.startsAt) > new Date()) up++;
         });
         setTotalSpent(spent);
         setUpcoming(up);
         setLoading(false);
+      })
+      .catch((err) => {
+        console.error(err);
+        setError("Couldn't load your bookings 😢");
+        setLoading(false);
       });
   };
 
   const loadHolds = () => {
-    fetch(`${API_URL}/holds/mine`, {
+    apiFetch(`${API_URL}/holds/mine`, {
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
     })
-      .then((res) => (res.ok ? res.json() : null))
+      .then((res) => {
+        if (!res.ok) throw new Error(`GET /holds/mine failed: ${res.status}`);
+        return res.json();
+      })
       .then((data) => {
-        if (!data) return;
         setClockOffset(new Date(data.serverTime).getTime() - Date.now());
         setHolds(data.holds);
       })
-      .catch((err) => console.error(err));
+      .catch((err) => {
+        console.error(err);
+        setError((prev) => prev || "Couldn't load your seats on hold 😢");
+      });
   };
 
   useEffect(() => {
@@ -100,7 +115,7 @@ export default function MyBookingsPage() {
     setCancelTarget(null);
     setCancelling(true);
     try {
-      const res = await fetch(`${API_URL}/bookings/${id}/cancel`, {
+      const res = await apiFetch(`${API_URL}/bookings/${id}/cancel`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
@@ -175,6 +190,10 @@ export default function MyBookingsPage() {
         </div>
       </div>
 
+      {error && (
+        <div className="mb-8 p-4 rounded-2xl bg-[#ef4444]/20 border border-[#ef4444]/40 text-[#fca5a5]">{error}</div>
+      )}
+
       {holds.length > 0 && (
         <div className="mb-10">
           <h2 className="text-2xl font-bold mb-4">
@@ -188,7 +207,7 @@ export default function MyBookingsPage() {
         </div>
       )}
 
-      {bookings.length === 0 && (
+      {bookings.length === 0 && !error && (
         <div className="text-center py-20 text-white/40">
           <div className="text-6xl">🎭</div>
           <p className="mt-4">No bookings yet!</p>

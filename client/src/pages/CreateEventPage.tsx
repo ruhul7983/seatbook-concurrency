@@ -1,5 +1,6 @@
 import { useState, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { apiFetch } from '../api';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 // Same limits as the server (server/src/utils/eventInput.ts).
@@ -32,7 +33,7 @@ export default function CreateEventPage() {
     }
 
     try {
-      const res = await fetch(`${API_URL}/events`, {
+      const res = await apiFetch(`${API_URL}/events`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

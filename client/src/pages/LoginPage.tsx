@@ -2,6 +2,8 @@ import { useState, FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import GradientButton from '../components/GradientButton';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+
 export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const next = searchParams.get('next');
@@ -17,21 +19,27 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
 
-    const res = await fetch(`http://localhost:4000/auth/${isLogin ? 'login' : 'register'}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(isLogin ? { email, password } : { email, password, name }),
-    });
-    const data = await res.json();
+    try {
+      // Plain fetch, not apiFetch: a 401 here means a wrong password, not an expired session.
+      const res = await fetch(`${API_URL}/auth/${isLogin ? 'login' : 'register'}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(isLogin ? { email, password } : { email, password, name }),
+      });
+      const data = await res.json();
 
-    if (!res.ok) {
-      setError(data.message || data.error);
-      return;
+      if (!res.ok) {
+        setError(data.message || data.error);
+        return;
+      }
+
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      window.location.href = redirectTo;
+    } catch (err) {
+      console.error(err);
+      setError('Something went wrong 😢');
     }
-
-    localStorage.setItem('token', data.token);
-    localStorage.setItem('user', JSON.stringify(data.user));
-    window.location.href = redirectTo;
   };
 
   return (
