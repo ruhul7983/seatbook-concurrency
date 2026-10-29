@@ -6,29 +6,31 @@ Seat booking for small venues. Organizers publish an event with a seat grid, att
 
 Seatbook worked, but it wasn't safe to take money through. Two people could book the same seat, anyone could cancel anyone's booking or make themselves an organizer, tokens were signed with a secret written in the code, and one malformed request could take the whole API down. I fixed those, then added seat holds: tap seats to hold them for 10 minutes on one countdown, confirm to book, or let them go back on sale.
 
-### Holds: why Redis, and not only the database
+### Holds: Postgres in charge, Redis in front
 
-A hold is a lock with a deadline. It has to do three things: never let two people own one seat, free the seat at the exact moment the time runs out, and keep working when a popular event opens and many people tap the same seats at once.
+A hold is a lock with a deadline. It has to do four things: never let two people own one seat, free the seat the moment the time runs out, keep working when a popular event opens and many people tap the same seats at once, and keep working if a piece of infrastructure fails.
 
-**The database-only design I considered first.** Store a `HELD` row with an `expiresAt`, and let a partial unique index allow only one live claim per seat. It's correct and has one moving part. But Postgres won't let an index condition use `now()`, so expired holds keep blocking their seat until something rewrites them. Every hold attempt would have to clean up stale rows and insert in one transaction. Under a burst, every click becomes a write transaction on the same few rows, and the losers queue for locks and pool connections before failing.
+**How it works.**
 
-**What I built.** I split the job between the two stores:
-
-- **Redis decides who holds a seat right now.** A hold is `SET seat-key token NX PXAT deadline`, run inside a Lua script so it is atomic. `NX` means exactly one request wins a seat. Every other request is turned away in memory, in microseconds, without touching Postgres. `PXAT` makes the key expire by itself at the deadline, so the seat is back on sale at that instant with no job involved. Each user also has a small hash per event that holds the shared deadline and their seat count, so adding seats joins the running countdown and the 6-seat limit is enforced in the same atomic step.
-- **Postgres records everything and has the final word.** Every hold is a `Booking` row (`HELD`, then `CONFIRMED`, `EXPIRED`, `RELEASED` or `CANCELLED`). A partial unique index allows only one `CONFIRMED` booking per seat. Even if Redis lost data or a bug slipped past it, the database still refuses a double booking.
+- **Postgres decides who holds a seat.** Every hold is a `Booking` row (`HELD`, then `CONFIRMED`, `EXPIRED`, `RELEASED` or `CANCELLED`) with an `expiresAt`. A seat is taken while it has a `CONFIRMED` booking, or a `HELD` one whose `expiresAt` is still ahead. Every hold and every confirm runs in a short transaction that locks the seat's row (`SELECT … FOR UPDATE`) and checks that rule, so two requests for one seat take turns and the second one sees the first. A hold also locks the user's row, so parallel taps can't break the 6-seat limit or start two countdowns. A partial unique index that allows only one `CONFIRMED` booking per seat is the last line of defence.
+- **Redis is a fast filter in front.** Before the transaction, a hold runs `SET seat-key token NX PXAT deadline` inside a Lua script. When hundreds of people tap the same seat, only the one that wins the Redis lock goes on to lock the row. The rest are turned away after one cheap indexed read, instead of queueing on the row lock and the connection pool. A small per-user hash keeps the shared deadline and seat count in the same atomic step.
+- **If Redis is down or slow, holds go straight to Postgres.** Redis commands time out after 500 ms. After a failure, Redis is skipped for 2 seconds before it's tried again, so an outage adds no wait to each request. Browsing, holding, confirming, releasing and booking all keep working; only the burst protection is gone until Redis is back.
+- **Redis is never trusted on its own.** A "taken" answer from Redis is checked against Postgres before it's final, because after an outage Redis can still hold locks for holds that were released while it was unreachable. Seat maps read holds from Postgres too.
 
 The flows:
 
-- **Hold:** take the Redis lock first, then check the seat isn't booked and write the `HELD` row. If the database step fails, the lock is released (compare-and-delete, so it only removes our own token).
-- **Confirm:** one Lua call checks that the user still owns every seat and keeps the locks for a 30-second grace period, so a confirm sent in the last second can finish. One database transaction then turns all the holds into bookings, all or nothing, with the unique index as the backstop. After that the locks are deleted.
-- **Expire:** Redis drops the key at the deadline. A sweeper marks the database row `EXPIRED` later; it only tidies records, and nothing waits for it.
+- **Hold:** take the Redis lock if Redis is up. Then, in one transaction: lock the user and seat rows, check for a live claim and the seat limit, join the running countdown, and write the `HELD` row. If the transaction refuses, the Redis lock is released.
+- **Confirm:** one transaction locks all the seats' rows in a fixed order, so two confirms can't deadlock. It checks that nobody else has claimed them and turns the holds into bookings, all or nothing. A confirm that arrives up to 5 seconds after the deadline still succeeds if nobody took the seat in the meantime. After that the Redis locks are deleted.
+- **Expire:** nothing has to run. Every check compares against `expiresAt`, and the Redis keys expire at the same moment. A sweeper later marks old rows `EXPIRED` to keep the records tidy.
 
-**The cost, honestly.** Redis is a second thing to run and reason about:
+**How this changed.** My first version let Redis decide who held a seat, and it failed closed: if Redis went down, holding and booking returned `503` until it came back. That was safe, but one cache outage stopped all sales. I moved the decision into Postgres, so a Redis outage now only costs the burst protection.
 
-- **If Redis is down,** browsing still works, but holding and booking return `503`. That fails closed: no seat is sold without a lock.
-- **A Redis restart loses live holds.** AOF persistence makes this rare, and losing 10-minute holds is acceptable.
-- **The two stores can briefly disagree.** For example, a `HELD` row can outlive its lost Redis key. Reads trust Redis for "is it held", and a confirm on such a row is refused.
-- **At today's size** (40-seat rooms), the database-only design would cope. I chose Redis for how it behaves under a burst and for exact expiry, and I kept Postgres as the guarantee so Redis is never trusted on its own.
+**The cost, honestly:**
+
+- **Every successful hold writes through a short Postgres transaction with row locks,** even with Redis up. At this app's size that takes milliseconds.
+- **With Redis down, a burst on one seat queues every request on that seat's row lock.** I tested 30 at once (one winner, the rest 409). Thousands at once would need the Redis filter back, or a queue.
+- **After an outage, stale Redis locks** cost one extra indexed read per request on that seat, until they expire or the next successful hold replaces them.
+- **At today's size** (40-seat rooms), Postgres alone would cope. Redis earns its place under a burst, and because Postgres stays in charge, losing Redis never makes the system wrong.
 
 ### Assumptions
 
@@ -50,7 +52,7 @@ The brief left these open, so I decided:
 **Seat holds (new):**
 
 - **Server:**
-  - Redis locks and the shared countdown ([redis.ts](server/src/redis.ts)), with the hold service in [holdService.ts](server/src/services/holdService.ts).
+  - Postgres-checked holds behind a Redis fast path, in [holdService.ts](server/src/services/holdService.ts), with the Redis scripts in [redis.ts](server/src/redis.ts).
   - Endpoints: `POST /holds`, `POST /holds/confirm`, `DELETE /holds/:id`, `GET /holds/mine`.
   - Direct booking (`POST /bookings`) now runs through the same lock, so it can't take a seat someone is holding.
   - Two migrations: the new enum values have their own migration because Postgres can't use an enum value in the transaction that adds it.
@@ -63,7 +65,7 @@ The brief left these open, so I decided:
 
 **Security and correctness fixes:**
 
-- **Double booking:** the Redis lock, plus the partial unique index on `CONFIRMED` bookings.
+- **Double booking:** seat row locks in Postgres decide every hold and confirm, the Redis lock filters bursts, and the partial unique index on `CONFIRMED` bookings backs them up.
 - **Cancelling other people's bookings:** cancel now checks ownership. Someone else's booking is a 404, so ids can't be probed. The response is the real result, not always `success: true`.
 - **Self-service organizers:** sign-up now creates attendees only and refuses any other role with a 403.
 - **Hardcoded, mismatched JWT secret:** there is one source ([config.ts](server/src/config.ts)) with no fallback, and the server refuses to start without a 32+ character secret. Signing and checking happen in one place with HS256 pinned, so `alg: none` and other-algorithm tokens are rejected. Docker generates a random secret into a volume on first start, so none is committed.
@@ -142,7 +144,15 @@ Two smaller ones:
 - **Fixes:** cancel ownership (21 checks), organizer sign-up (17), event and price validation (24), JWT (15). The JWT checks cover old-secret, wrong-secret, `alg: none`, HS512 and expired tokens; tokens surviving a server restart; and refusing to start without a secret.
 - **Bad input:** before the fix, one `POST /auth/login` with `{}` took the API down. After it, 342 malformed requests across every route: the server stayed up, with no 500s and no leaked internals.
 - **Failure paths:**
-  - With Redis stopped, holds return 503 and browsing still works.
+  - **With Redis stopped:**
+    - Holding, confirming, releasing and direct booking all still work.
+    - 30 parallel holds on one seat still give exactly one winner, and 30 parallel bookings likewise.
+    - The 6-seat limit and the shared countdown hold.
+    - Expiry still frees seats.
+  - **When Redis comes back:** a hold made during the outage still blocks others. A lock left over from a seat released during the outage doesn't block the next person.
+  - **With Redis frozen** (paused, so it accepts connections but never replies): holds fall back in about 0.5 seconds.
+  - **With Redis wiped** (`FLUSHALL`): existing holds are still respected.
+  - **Afterwards:** no seat has two confirmed bookings, two live holds, or a live hold on a booked seat.
   - When the unique index fires inside a confirm, the user gets a clean 409.
   - `docker compose port redis 6379` shows nothing, so Redis isn't reachable from the host.
 - **In the browser,** with two accounts:
@@ -232,10 +242,10 @@ Send the token as `Authorization: Bearer <token>`. `GET /events/:id` also accept
 
 An attendee taps a free seat to hold it, and can tap more seats (up to 6 per event) to add them. All their seats share one 10 minute countdown, started by the first seat. Nobody else can hold or book those seats meanwhile. Confirming in time books them all at once; otherwise they go back on sale. Tapping a held seat asks before releasing it, so a double tap never gives a seat away.
 
-- **Redis decides who holds a seat right now.** Holding sets a lock key per seat that expires by itself when the countdown ends, using `SET NX` inside a Lua script so racing requests get exactly one winner. A per-user hash per event keeps the shared deadline and the seat count.
-- **Postgres records every hold and booking** (`HELD`, `CONFIRMED`, `EXPIRED`, `RELEASED`, `CANCELLED`) and has the final word: a partial unique index allows only one `CONFIRMED` booking per seat. A background sweeper marks finished holds `EXPIRED` in the database; seats free up the moment the Redis key expires, without waiting for it.
+- **Postgres decides who holds a seat.** Every hold and booking is a `Booking` row (`HELD`, `CONFIRMED`, `EXPIRED`, `RELEASED`, `CANCELLED`). Holds and confirms lock the seat's row and check for a live claim (a `CONFIRMED` booking, or a `HELD` one whose `expiresAt` is ahead), so racing requests get exactly one winner. A partial unique index allows only one `CONFIRMED` booking per seat as a backstop. A hold ends the moment its `expiresAt` passes; a background sweeper later marks it `EXPIRED`.
+- **Redis is a fast filter in front.** A hold first takes a Redis lock (`SET NX` in a Lua script, expiring at the deadline), so under a burst only the winner reaches the row lock. A per-user hash per event keeps the shared deadline and seat count.
+- **If Redis is down or slow, everything keeps working.** Holds skip Redis (500 ms command timeout, then 2 seconds before Redis is tried again) and go straight to Postgres. A "taken" answer from Redis is checked against Postgres, so stale locks left over from an outage never block a free seat.
 - **Holds need an account.** A logged-out visitor sees a banner, and tapping a seat opens a "Sign in to hold this seat" pop-up. The seat is only remembered in their browser. After signing in they come back to the event and the app tries to hold it; if someone signed in took it first, they're told so.
-- If Redis is down, browsing still works but holding and booking return `503` instead of risking a double booking.
 
 `HOLD_SECONDS` (default `600`) sets the countdown length and `HOLD_MAX_SEATS` (default `6`) the seats one user can hold per event.
 

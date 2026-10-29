@@ -59,7 +59,9 @@ model Seat {
   @@unique([eventId, row, col])
 }
 
-// The live seat lock for a hold lives in Redis. This table is the record of every hold and booking.
+// Every hold and booking. A seat is taken while it has a CONFIRMED booking or a HELD one whose
+// expiresAt is still ahead; holds and confirms check that under a lock on the seat's row, so this
+// table decides who holds a seat even when Redis (only a fast filter) is down.
 //
 // The migration 20261026000100_booking_holds also adds a partial unique index that Prisma cannot
 // express here: at most one CONFIRMED booking per seat ("Booking_seatId_confirmed_key").
@@ -78,4 +80,6 @@ model Booking {
   cancelledAt DateTime?
 
   @@index([status, expiresAt])
+  @@index([seatId, status])
+  @@index([userId, status])
 }

@@ -8,7 +8,7 @@ export async function listEvents() {
     include: { seats: { include: { bookings: { where: { status: 'CONFIRMED' } } } } },
   });
 
-  const held = await getHeldSeats(events.flatMap((event) => event.seats));
+  const held = await getHeldSeats(events.flatMap((event) => event.seats.map((seat) => seat.id)));
 
   return events.map((event) => {
     const seatsLeft = event.seats.filter((seat) => isSeatBookable(seat, event) && !held.has(seat.id)).length;
@@ -41,8 +41,8 @@ export async function getEventWithSeats(id: number, viewerId?: number) {
     return null;
   }
 
-  const held = await getHeldSeats(event.seats);
-  const myHolds = viewerId ? await getMyHoldsForEvent(viewerId, event.id, held) : [];
+  const held = await getHeldSeats(event.seats.map((seat) => seat.id));
+  const myHolds = viewerId ? await getMyHoldsForEvent(viewerId, event.id) : [];
   const mySeatIds = new Set(myHolds.map((h) => h.seatId));
 
   const seats = event.seats.map((seat) => {
